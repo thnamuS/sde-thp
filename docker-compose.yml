@@ -89,10 +89,24 @@ services:
     env_file: .env
     environment:
       NEXORA_API_URL: http://gateway:8080
+      ENTERPRISE_WORKER_API_KEY: ${ACME_API_KEY}
       ENTERPRISE_TARGET_URL: http://acme:8090/work
     depends_on:
       gateway: {condition: service_started}
       acme: {condition: service_started}
+    networks: [nexora]
+
+  lorem-enterprise-worker:
+    <<: *go-service
+    command: ["/services/enterprise-worker"]
+    env_file: .env
+    environment:
+      NEXORA_API_URL: http://gateway:8080
+      ENTERPRISE_WORKER_API_KEY: ${LOREM_API_KEY}
+      ENTERPRISE_TARGET_URL: http://lorem:8091/work
+    depends_on:
+      gateway: {condition: service_started}
+      lorem: {condition: service_started}
     networks: [nexora]
 
   acme:
@@ -103,16 +117,31 @@ services:
       NEXORA_API_URL: http://gateway:8080
     ports: ["127.0.0.1:8090:8090"]
 
+  lorem:
+    <<: *go-service
+    command: ["/services/acme"]
+    environment:
+      PORT: "8091"
+      NEXORA_API_URL: http://gateway:8080
+      ACME_API_KEY: ${LOREM_API_KEY}
+    ports: ["127.0.0.1:8091:8091"]
+
   customer-web:
-    build: {context: ./web/customer}
-    environment: {NEXT_PUBLIC_API_URL: http://localhost:8080}
+    build:
+      context: ./web/customer
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://127.0.0.1:8080}
+    environment: {NEXT_PUBLIC_API_URL: http://127.0.0.1:8080}
     ports: ["127.0.0.1:3000:3000"]
     depends_on: [gateway]
     networks: [nexora]
 
   admin-web:
-    build: {context: ./web/admin}
-    environment: {NEXT_PUBLIC_API_URL: http://localhost:8080}
+    build:
+      context: ./web/admin
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://127.0.0.1:8080}
+    environment: {NEXT_PUBLIC_API_URL: http://127.0.0.1:8080}
     ports: ["127.0.0.1:3001:3000"]
     depends_on: [gateway]
     networks: [nexora]

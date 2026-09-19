@@ -1,4 +1,4 @@
-module github.com/cipherion-ai/nexora
+module github.com/sumanth/cipherion-ai
 
 go 1.25.0
 

@@ -21,7 +21,7 @@ docker compose up --build
 
 Open:
 
-- Customer console: http://localhost:3000 (`ops@acme.test` / `AcmeDemo123!`)
+- Customer console: http://localhost:3000 (`ops@acme.test` / `AcmeDemo123!`, or `ops@lorem.test` / `LoremDemo123!`)
 - Admin console: http://localhost:3001 (`admin@nexora.local` / `ChangeMe123!`)
 - Gateway health: http://localhost:8080/readyz
 - Acme demo server: http://localhost:8090/healthz
@@ -54,3 +54,5 @@ The implementation has exactly three domain services: Customer & Access, Operati
 The assessment requested a Node.js/TypeScript gateway. This project intentionally uses Go/Echo for the gateway following the project owner's explicit decision. That deviation is recorded in [ADR 0001](docs/decisions/0001-go-gateway.md).
 
 See [architecture](docs/architecture.md), [API reference](docs/api.md), and [submission checklist](docs/submission-checklist.md).
+
+For an implementation-level walkthrough of every service, source directory, runtime flow, data model, configuration value, worker protocol, frontend behavior, verification command, and current hardening caveat, see the [complete codebase reference](docs/codebase.md).

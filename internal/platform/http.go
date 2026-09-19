@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cipherion-ai/nexora/internal/contracts"
+	"github.com/sumanth/cipherion-ai/internal/contracts"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )

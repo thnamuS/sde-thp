@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cipherion-ai/nexora/internal/contracts"
-	"github.com/cipherion-ai/nexora/internal/platform"
+	"github.com/sumanth/cipherion-ai/internal/contracts"
+	"github.com/sumanth/cipherion-ai/internal/platform"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"

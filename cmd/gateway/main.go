@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cipherion-ai/nexora/internal/contracts"
-	"github.com/cipherion-ai/nexora/internal/platform"
+	"github.com/sumanth/cipherion-ai/internal/contracts"
+	"github.com/sumanth/cipherion-ai/internal/platform"
 	"github.com/labstack/echo/v4"
 	"github.com/redis/go-redis/v9"
 )
@@ -223,6 +223,10 @@ func (g *gateway) proxyPath(service string, path func(echo.Context) string) echo
 	return func(c echo.Context) error {
 		target := g.targets[service]
 		proxy := httputil.NewSingleHostReverseProxy(target)
+		proxy.ModifyResponse = func(response *http.Response) error {
+			stripUpstreamCORSHeaders(response.Header)
+			return nil
+		}
 		originalDirector := proxy.Director
 		proxy.Director = func(req *http.Request) {
 			originalDirector(req)
@@ -241,6 +245,15 @@ func (g *gateway) proxyPath(service string, path func(echo.Context) string) echo
 		return nil
 	}
 }
+
+func stripUpstreamCORSHeaders(headers http.Header) {
+	for key := range headers {
+		if strings.HasPrefix(strings.ToLower(key), "access-control-") {
+			headers.Del(key)
+		}
+	}
+}
+
 func (g *gateway) ready(c echo.Context) error {
 	status := map[string]string{}
 	healthy := true

@@ -13,12 +13,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cipherion-ai/nexora/internal/platform"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
+	"github.com/sumanth/cipherion-ai/internal/platform"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -68,28 +68,61 @@ func (s *service) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	acmeKey := os.Getenv("ACME_API_KEY")
-	if acmeKey == "" {
+	if err = s.seedDemoTenant(ctx, demoTenant{
+		Name:             "Acme Support",
+		Slug:             "acme-support",
+		MonthlyQuota:     10000,
+		ConcurrencyLimit: 10,
+		Email:            "ops@acme.test",
+		Password:         "AcmeDemo123!",
+		APIKeyEnv:        "ACME_API_KEY",
+	}); err != nil {
+		return err
+	}
+	return s.seedDemoTenant(ctx, demoTenant{
+		Name:             "Lorem Ipsum",
+		Slug:             "lorem-ipsum",
+		MonthlyQuota:     5000,
+		ConcurrencyLimit: 5,
+		Email:            "ops@lorem.test",
+		Password:         "LoremDemo123!",
+		APIKeyEnv:        "LOREM_API_KEY",
+	})
+}
+
+type demoTenant struct {
+	Name             string
+	Slug             string
+	MonthlyQuota     int
+	ConcurrencyLimit int
+	Email            string
+	Password         string
+	APIKeyEnv        string
+}
+
+func (s *service) seedDemoTenant(ctx context.Context, tenant demoTenant) error {
+	apiKey := os.Getenv(tenant.APIKeyEnv)
+	if apiKey == "" {
 		return nil
 	}
-	var acmeTenant string
-	if err = s.db.QueryRow(ctx, `INSERT INTO access.tenants(name,slug,monthly_quota,concurrency_limit) VALUES('Acme Support','acme-support',10000,10) ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name RETURNING id`).Scan(&acmeTenant); err != nil {
+	var tenantID string
+	if err := s.db.QueryRow(ctx, `INSERT INTO access.tenants(name,slug,monthly_quota,concurrency_limit) VALUES($1,$2,$3,$4) ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name RETURNING id`, tenant.Name, tenant.Slug, tenant.MonthlyQuota, tenant.ConcurrencyLimit).Scan(&tenantID); err != nil {
 		return err
 	}
-	acmePassword, err := bcrypt.GenerateFromPassword([]byte("AcmeDemo123!"), bcrypt.DefaultCost)
+	password, err := bcrypt.GenerateFromPassword([]byte(tenant.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(ctx, `INSERT INTO access.users(tenant_id,email,password_hash,role) VALUES($1,'ops@acme.test',$2,'customer') ON CONFLICT(email) DO NOTHING`, acmeTenant, string(acmePassword))
+	_, err = s.db.Exec(ctx, `INSERT INTO access.users(tenant_id,email,password_hash,role) VALUES($1,$2,$3,'customer') ON CONFLICT(email) DO NOTHING`, tenantID, strings.ToLower(tenant.Email), string(password))
 	if err != nil {
 		return err
 	}
-	keyHash := sha256.Sum256([]byte(acmeKey))
-	prefix := acmeKey
+	keyHash := sha256.Sum256([]byte(apiKey))
+	prefix := apiKey
 	if len(prefix) > 16 {
 		prefix = prefix[:16]
 	}
-	_, err = s.db.Exec(ctx, `INSERT INTO access.api_keys(tenant_id,name,prefix,key_hash) VALUES($1,'local demo',$2,$3) ON CONFLICT(key_hash) DO NOTHING`, acmeTenant, prefix, hex.EncodeToString(keyHash[:]))
+	_, err = s.db.Exec(ctx, `INSERT INTO access.api_keys(tenant_id,name,prefix,key_hash) VALUES($1,'local demo',$2,$3) ON CONFLICT(key_hash) DO NOTHING`, tenantID, prefix, hex.EncodeToString(keyHash[:]))
 	return err
 }
 

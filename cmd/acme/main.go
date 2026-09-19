@@ -15,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cipherion-ai/nexora/internal/platform"
+	"github.com/sumanth/cipherion-ai/internal/platform"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 )
