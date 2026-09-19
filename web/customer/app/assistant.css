@@ -1,0 +1,3 @@
+.assistant{display:grid;grid-template-columns:220px 1fr;gap:18px;padding:20px 22px;margin-bottom:20px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(120deg,#101916,#15251f)}
+.assistant h2{margin-top:3px}.assistant .eyebrow{margin:0}.ask{display:flex;gap:8px}.ask input{flex:1}.assistant>p{grid-column:2;color:#cfe2d8;margin:0}
+@media(max-width:800px){.assistant{grid-template-columns:1fr}.assistant>p{grid-column:1}.ask{flex-direction:column}}

@@ -1,0 +1,125 @@
+name: nexora
+
+x-go-service: &go-service
+  image: nexora-backend:local
+  build:
+    context: .
+    dockerfile: build/go.Dockerfile
+  env_file: .env
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  networks: [nexora]
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nexora}
+      POSTGRES_USER: ${POSTGRES_USER:-nexora}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexora_dev}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexora} -d ${POSTGRES_DB:-nexora}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    networks: [nexora]
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes: [redis_data:/data]
+    networks: [nexora]
+
+  access:
+    <<: *go-service
+    command: ["/services/access"]
+    environment: {PORT: "8081"}
+
+  operations:
+    <<: *go-service
+    command: ["/services/operations"]
+    environment:
+      PORT: "8082"
+      USAGE_URL: http://usage:8083
+
+  usage:
+    <<: *go-service
+    command: ["/services/usage"]
+    environment: {PORT: "8083"}
+
+  gateway:
+    <<: *go-service
+    command: ["/services/gateway"]
+    environment:
+      PORT: "8080"
+      ACCESS_URL: http://access:8081
+      OPERATIONS_URL: http://operations:8082
+      USAGE_URL: http://usage:8083
+    depends_on:
+      access: {condition: service_started}
+      operations: {condition: service_started}
+      usage: {condition: service_started}
+    ports: ["127.0.0.1:8080:8080"]
+
+  worker:
+    <<: *go-service
+    command: ["/services/worker"]
+    environment:
+      OPERATIONS_URL: http://operations:8082
+      USAGE_URL: http://usage:8083
+    deploy:
+      replicas: 2
+    profiles: ["cloud-worker"]
+
+  enterprise-worker:
+    <<: *go-service
+    command: ["/services/enterprise-worker"]
+    env_file: .env
+    environment:
+      NEXORA_API_URL: http://gateway:8080
+      ENTERPRISE_TARGET_URL: http://acme:8090/work
+    depends_on:
+      gateway: {condition: service_started}
+      acme: {condition: service_started}
+    networks: [nexora]
+
+  acme:
+    <<: *go-service
+    command: ["/services/acme"]
+    environment:
+      PORT: "8090"
+      NEXORA_API_URL: http://gateway:8080
+    ports: ["127.0.0.1:8090:8090"]
+
+  customer-web:
+    build: {context: ./web/customer}
+    environment: {NEXT_PUBLIC_API_URL: http://localhost:8080}
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: [gateway]
+    networks: [nexora]
+
+  admin-web:
+    build: {context: ./web/admin}
+    environment: {NEXT_PUBLIC_API_URL: http://localhost:8080}
+    ports: ["127.0.0.1:3001:3000"]
+    depends_on: [gateway]
+    networks: [nexora]
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  nexora:
