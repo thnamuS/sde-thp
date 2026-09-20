@@ -802,7 +802,7 @@ The `acme` and `lorem` containers run `cmd/acme/main.go`. These endpoints are de
 
 | Method | Path | Behavior |
 |---|---|---|
-| `POST` | `/work` | Simulated target; `mode=fail` returns 500, `reject` returns 422, `slow` waits 35 seconds |
+| `POST` | `/work` | Simulated customer job target. Reads the JSON payload, increments a demo request counter, and returns a fake job result. Payload `mode=normal` succeeds quickly, `mode=fail` returns HTTP 500 for retry testing, `mode=reject` returns HTTP 422 for permanent-failure testing, and `mode=slow` sleeps for about 35 seconds for timeout/lease testing. |
 | `POST` | `/webhook` | Receives signed webhook requests; can be disabled |
 | `GET` | `/demo/normal` | Submit one successful private operation |
 | `GET` | `/demo/burst?count=25` | Submit up to 100 operations |

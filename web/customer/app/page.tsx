@@ -408,7 +408,6 @@ export default function Home() {
         )}
         {answer && <p>{answer}</p>}
       </section>
-      {/*
       <section className="panel webhooks">
         <div className="panelTitle">
           <h2>Webhook endpoints</h2>
@@ -447,7 +446,6 @@ export default function Home() {
           <div className="empty compact">No webhook endpoints registered.</div>
         )}
       </section>
-      */}
       <section className="panel">
         <div className="panelTitle">
           <h2>Recent operations</h2>
