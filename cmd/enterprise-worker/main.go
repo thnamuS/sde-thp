@@ -15,8 +15,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sumanth/cipherion-ai/internal/contracts"
 	"github.com/google/uuid"
+	"github.com/sumanth/cipherion-ai/internal/contracts"
 )
 
 type agent struct {
@@ -47,6 +47,7 @@ func (a *agent) run(ctx context.Context) {
 		if status == 204 {
 			continue
 		}
+		slog.Info("enterprise worker claimed operation", "operation_id", operation.OperationID, "worker_id", a.id, "outbound_only", true)
 		a.process(ctx, operation)
 	}
 }
@@ -83,6 +84,8 @@ func (a *agent) process(ctx context.Context, operation contracts.QueueEnvelope) 
 		_, callErr := a.call(ctx, http.MethodPost, "/v1/worker/operations/"+operation.OperationID+"/complete", map[string]any{"worker_id": a.id, "result": json.RawMessage(result), "ai_explanation": a.explain(ctx, operation, result, "")}, nil)
 		if callErr != nil {
 			slog.Error("completion failed", "operation_id", operation.OperationID, "error", callErr)
+		} else {
+			slog.Info("enterprise worker finished operation", "operation_id", operation.OperationID, "worker_id", a.id, "status", "SUCCEEDED")
 		}
 		return
 	}
@@ -90,6 +93,8 @@ func (a *agent) process(ctx context.Context, operation contracts.QueueEnvelope) 
 	_, callErr := a.call(ctx, http.MethodPost, "/v1/worker/operations/"+operation.OperationID+"/fail", map[string]any{"worker_id": a.id, "error_code": errorCode(status), "error_message": err.Error(), "retryable": retryable, "ai_explanation": a.explain(ctx, operation, result, err.Error())}, nil)
 	if callErr != nil {
 		slog.Error("failure report failed", "operation_id", operation.OperationID, "error", callErr)
+	} else {
+		slog.Info("enterprise worker finished operation", "operation_id", operation.OperationID, "worker_id", a.id, "status", "FAILED", "retryable", retryable)
 	}
 }
 func (a *agent) heartbeat(ctx context.Context, id string) {
