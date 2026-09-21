@@ -23,7 +23,7 @@ lint:
 	cd web/admin && npm run lint
 
 migrate:
-	docker compose run --rm migrate
+	docker compose up -d postgres
 
 smoke:
 	./scripts/smoke.sh

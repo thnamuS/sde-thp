@@ -15,12 +15,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sumanth/cipherion-ai/internal/contracts"
-	"github.com/sumanth/cipherion-ai/internal/platform"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
+	"github.com/sumanth/cipherion-ai/internal/contracts"
+	"github.com/sumanth/cipherion-ai/internal/platform"
 )
 
 type service struct {
@@ -77,7 +77,7 @@ func (s *service) recordEvent(c echo.Context) error {
 		return err
 	}
 	if result.RowsAffected() > 0 {
-		_, err = tx.Exec(c.Request().Context(), `INSERT INTO usage.webhook_outbox(tenant_id,endpoint_id,event_type,operation_id,payload) SELECT $1,id,$2,$3,$4 FROM usage.webhook_endpoints WHERE tenant_id=$1 AND enabled=true ON CONFLICT DO NOTHING`, event.TenantID, event.EventType, event.OperationID, event.Payload)
+		_, err = tx.Exec(c.Request().Context(), `INSERT INTO usage.webhook_outbox(tenant_id,endpoint_id,event_type,operation_id,payload) SELECT $1,id,$2,$3,$4 FROM usage.webhook_endpoints WHERE tenant_id=$1 AND enabled=true`, event.TenantID, event.EventType, event.OperationID, event.Payload)
 		if err != nil {
 			return err
 		}
@@ -230,7 +230,24 @@ func (s *service) dispatchLoop(ctx context.Context) {
 	}
 }
 func (s *service) dispatchBatch(ctx context.Context) {
-	rows, err := s.db.Query(ctx, `SELECT o.id,o.tenant_id,e.url,e.secret,o.event_type,o.operation_id,o.payload,o.attempt FROM usage.webhook_outbox o JOIN usage.webhook_endpoints e ON e.id=o.endpoint_id WHERE o.status='PENDING' AND o.next_attempt_at<=now() ORDER BY o.created_at LIMIT 20 FOR UPDATE OF o SKIP LOCKED`)
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `WITH picked AS (
+		SELECT o.id
+		FROM usage.webhook_outbox o
+		WHERE o.status='PENDING' AND o.next_attempt_at<=now()
+		ORDER BY o.created_at
+		LIMIT 20
+		FOR UPDATE SKIP LOCKED
+	)
+	UPDATE usage.webhook_outbox o
+	SET status='IN_FLIGHT'
+	FROM picked, usage.webhook_endpoints e
+	WHERE o.id=picked.id AND e.id=o.endpoint_id
+	RETURNING o.id,o.tenant_id,e.url,e.secret,o.event_type,o.operation_id,o.payload,o.attempt`)
 	if err != nil {
 		return
 	}
@@ -242,6 +259,12 @@ func (s *service) dispatchBatch(ctx context.Context) {
 		}
 	}
 	rows.Close()
+	if rows.Err() != nil {
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return
+	}
 	for _, d := range items {
 		s.deliver(ctx, d)
 	}
@@ -266,16 +289,16 @@ func (s *service) deliver(ctx context.Context, d delivery) {
 		}
 	}
 	if err == nil {
-		_, _ = s.db.Exec(ctx, `UPDATE usage.webhook_outbox SET status='DELIVERED',delivered_at=now(),attempt=attempt+1 WHERE id=$1`, d.ID)
+		_, _ = s.db.Exec(ctx, `UPDATE usage.webhook_outbox SET status='DELIVERED',delivered_at=now(),attempt=attempt+1 WHERE id=$1 AND status='IN_FLIGHT'`, d.ID)
 		return
 	}
 	attempt := d.Attempt + 1
 	if attempt >= 8 {
-		_, _ = s.db.Exec(ctx, `UPDATE usage.webhook_outbox SET status='DEAD_LETTERED',attempt=$2,last_error=$3 WHERE id=$1`, d.ID, attempt, err.Error())
+		_, _ = s.db.Exec(ctx, `UPDATE usage.webhook_outbox SET status='DEAD_LETTERED',attempt=$2,last_error=$3 WHERE id=$1 AND status='IN_FLIGHT'`, d.ID, attempt, err.Error())
 		return
 	}
 	delay := time.Duration(1<<min(attempt, 8)) * time.Second
-	_, _ = s.db.Exec(ctx, `UPDATE usage.webhook_outbox SET attempt=$2,last_error=$3,next_attempt_at=now()+make_interval(secs=>$4) WHERE id=$1`, d.ID, attempt, err.Error(), int(delay.Seconds()))
+	_, _ = s.db.Exec(ctx, `UPDATE usage.webhook_outbox SET status='PENDING',attempt=$2,last_error=$3,next_attempt_at=now()+make_interval(secs=>$4) WHERE id=$1 AND status='IN_FLIGHT'`, d.ID, attempt, err.Error(), int(delay.Seconds()))
 }
 
 var _ = errors.Is

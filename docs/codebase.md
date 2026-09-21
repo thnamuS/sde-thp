@@ -7,7 +7,7 @@ This document describes the implementation that is currently in this repository.
 3. Which database, Redis, and HTTP contracts connect the parts?
 4. Where are the important operational and security boundaries?
 
-The high-level design is in [architecture.md](architecture.md), the short public API list is in [api.md](api.md), and the product/demo checklist is in [submission-checklist.md](submission-checklist.md). This file is the implementation-level companion to those documents.
+The high-level design is in [architecture.md](architecture.md), and the short public API list is in [api.md](api.md). This file is the implementation-level companion to those documents.
 
 ## 1. Product and execution model
 
@@ -223,11 +223,11 @@ The gateway uses a Redis Lua script to increment `rate:<tenant-id>:<unix-minute>
 | `FAILED` | `RETRYING`, `DEAD_LETTERED`, `CANCELLED` |
 | `RETRYING` | `QUEUED`, `RUNNING`, `DEAD_LETTERED`, `CANCELLED` |
 
-`SUCCEEDED`, `DEAD_LETTERED`, and `CANCELLED` are terminal. `CanTransition` checks the map and `IsTerminal` checks the three terminal values. The command services enforce their state changes with SQL `WHERE status ...` predicates; the shared helper is not imported by those handlers.
+`SUCCEEDED`, `DEAD_LETTERED`, and `CANCELLED` are terminal. `CanTransition` checks the map and `IsTerminal` checks the three terminal values. The Operations service uses these helpers when deciding whether skipped stream messages are permanently unclaimable and when reporting cancellation conflicts; SQL `WHERE status ...` predicates still enforce atomic state changes.
 
 ### Retry delay
 
-`RetryDelay(attempt)` clamps attempts to 1 through 6 and returns `2^attempt` seconds: 2, 4, 8, 16, 32, or 64 seconds. The operations handlers use equivalent bounded expressions for retry and lease recovery.
+`RetryDelay(attempt)` clamps attempts to 1 through 6 and returns `2^attempt` seconds: 2, 4, 8, 16, 32, or 64 seconds. The Operations service uses it for worker retry scheduling.
 
 ## 8. Operation submission and dispatch
 
@@ -379,7 +379,7 @@ Customers create endpoints with an HTTP(S) URL and a secret of at least 16 chara
 - `X-Nexora-Delivery`: webhook outbox UUID.
 - `X-Nexora-Signature`: `sha256=<lowercase hex digest>`.
 
-The delivery loop runs once per second, selects up to 20 due records with `FOR UPDATE OF ... SKIP LOCKED`, and retries failures with bounded exponential delay. After eight attempts it marks the delivery `DEAD_LETTERED`.
+The delivery loop runs once per second, claims up to 20 due records in a transaction with `FOR UPDATE SKIP LOCKED`, marks them `IN_FLIGHT`, and then delivers them outside the transaction. Failed deliveries return to `PENDING` with bounded exponential delay; after eight attempts they are marked `DEAD_LETTERED`.
 
 ### Server-sent events
 

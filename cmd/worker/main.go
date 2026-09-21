@@ -15,10 +15,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sumanth/cipherion-ai/internal/contracts"
-	"github.com/sumanth/cipherion-ai/internal/platform"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/sumanth/cipherion-ai/internal/contracts"
+	"github.com/sumanth/cipherion-ai/internal/platform"
 )
 
 const streamName = "nexora:operations"
@@ -83,8 +83,7 @@ func (w *worker) process(ctx context.Context, message redis.XMessage) {
 		return
 	}
 	if err := w.postJSON(ctx, w.cfg.OperationsURL+"/internal/operations/"+env.OperationID+"/claim", map[string]any{"worker_id": w.id, "lease_seconds": 45}, nil); err != nil {
-		slog.Warn("claim rejected", "operation_id", env.OperationID, "error", err)
-		_ = w.redis.XAck(ctx, streamName, "workers", message.ID).Err()
+		slog.Warn("claim rejected; leaving stream message unacked for retry", "operation_id", env.OperationID, "message_id", message.ID, "error", err)
 		return
 	}
 	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)

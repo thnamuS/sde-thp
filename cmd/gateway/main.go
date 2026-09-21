@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sumanth/cipherion-ai/internal/contracts"
-	"github.com/sumanth/cipherion-ai/internal/platform"
 	"github.com/labstack/echo/v4"
 	"github.com/redis/go-redis/v9"
+	"github.com/sumanth/cipherion-ai/internal/contracts"
+	"github.com/sumanth/cipherion-ai/internal/platform"
 )
 
 type gateway struct {
@@ -143,11 +143,6 @@ func (g *gateway) askOpenRouter(ctx context.Context, model, prompt string) (stri
 
 func (g *gateway) authenticate(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		requestBody, err := io.ReadAll(io.LimitReader(c.Request().Body, 2<<20))
-		if err != nil {
-			return echo.NewHTTPError(400, "could not read request")
-		}
-		c.Request().Body = io.NopCloser(bytes.NewReader(requestBody))
 		req, err := http.NewRequestWithContext(c.Request().Context(), http.MethodPost, g.cfg.AccessURL+"/internal/verify", nil)
 		if err != nil {
 			return err

@@ -15,18 +15,19 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sumanth/cipherion-ai/internal/platform"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/sumanth/cipherion-ai/internal/platform"
 )
 
 type server struct {
-	cfg      platform.Config
-	apiKey   string
-	webhooks atomic.Bool
-	requests atomic.Int64
-	http     *http.Client
-	apiURL   string
+	cfg       platform.Config
+	apiKey    string
+	webhooks  atomic.Bool
+	requests  atomic.Int64
+	http      *http.Client
+	apiURL    string
+	targetURL string
 }
 
 func main() {
@@ -35,7 +36,11 @@ func main() {
 	if apiURL == "" {
 		apiURL = "http://localhost:8080"
 	}
-	s := &server{cfg: cfg, apiKey: os.Getenv("ACME_API_KEY"), apiURL: apiURL, http: &http.Client{Timeout: 15 * time.Second}}
+	targetURL := os.Getenv("OPERATION_TARGET_URL")
+	if targetURL == "" {
+		targetURL = "http://acme:8090/work"
+	}
+	s := &server{cfg: cfg, apiKey: os.Getenv("ACME_API_KEY"), apiURL: apiURL, targetURL: targetURL, http: &http.Client{Timeout: 15 * time.Second}}
 	s.webhooks.Store(true)
 	e := platform.NewServer("acme")
 	e.POST("/work", s.work)
@@ -150,7 +155,7 @@ func (s *server) createOperation(ctx context.Context, key string, payload any) (
 	if s.apiKey == "" {
 		return map[string]string{"error": "ACME_API_KEY is not configured"}, 503
 	}
-	input := map[string]any{"task_type": "acme.ticket.process", "target_url": "http://acme:8090/work", "payload": payload, "max_attempts": 3}
+	input := map[string]any{"task_type": "acme.ticket.process", "target_url": s.targetURL, "payload": payload, "max_attempts": 3}
 	body, _ := json.Marshal(input)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.apiURL+"/v1/operations", bytes.NewReader(body))
 	if err != nil {

@@ -12,14 +12,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sumanth/cipherion-ai/internal/contracts"
-	"github.com/sumanth/cipherion-ai/internal/platform"
 	"github.com/dbos-inc/dbos-transact-golang/dbos"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 	"github.com/redis/go-redis/v9"
+	"github.com/sumanth/cipherion-ai/internal/contracts"
+	"github.com/sumanth/cipherion-ai/internal/domain"
+	"github.com/sumanth/cipherion-ai/internal/platform"
 )
 
 const streamName = "nexora:operations"
@@ -182,8 +183,12 @@ func (s *service) create(c echo.Context) error {
 	if err := s.db.QueryRow(c.Request().Context(), `SELECT monthly_quota,concurrency_limit FROM access.tenants WHERE id=$1`, tenantID).Scan(&quota, &limit); err != nil {
 		return err
 	}
-	_ = s.db.QueryRow(c.Request().Context(), `SELECT COALESCE(sum(units),0) FROM usage.ledger WHERE tenant_id=$1 AND created_at>=date_trunc('month',now())`, tenantID).Scan(&used)
-	_ = s.db.QueryRow(c.Request().Context(), `SELECT count(*) FROM operations.operations WHERE tenant_id=$1 AND status='RUNNING'`, tenantID).Scan(&running)
+	if err := s.db.QueryRow(c.Request().Context(), `SELECT COALESCE(sum(units),0) FROM usage.ledger WHERE tenant_id=$1 AND created_at>=date_trunc('month',now())`, tenantID).Scan(&used); err != nil {
+		return err
+	}
+	if err := s.db.QueryRow(c.Request().Context(), `SELECT count(*) FROM operations.operations WHERE tenant_id=$1 AND status='RUNNING'`, tenantID).Scan(&running); err != nil {
+		return err
+	}
 	if used >= quota {
 		return echo.NewHTTPError(http.StatusPaymentRequired, "monthly quota exhausted")
 	}
@@ -299,12 +304,21 @@ func (s *service) list(c echo.Context) error {
 
 func (s *service) cancel(c echo.Context) error {
 	tenant := c.Request().Header.Get(platform.TenantHeader)
-	result, err := s.db.Exec(c.Request().Context(), `UPDATE operations.operations SET status='CANCELLED',updated_at=now(),version=version+1 WHERE id=$1 AND tenant_id=$2 AND status IN ('PENDING','QUEUED','RUNNING','RETRYING','FAILED')`, c.Param("id"), tenant)
+	result, err := s.db.Exec(c.Request().Context(), `UPDATE operations.operations SET status='CANCELLED',lease_owner=NULL,lease_expires_at=NULL,updated_at=now(),version=version+1 WHERE id=$1 AND tenant_id=$2 AND status IN ('PENDING','QUEUED','RUNNING','RETRYING','FAILED')`, c.Param("id"), tenant)
 	if err != nil {
 		return err
 	}
 	if result.RowsAffected() == 0 {
-		return echo.NewHTTPError(409, "operation is missing or already terminal")
+		var status string
+		if scanErr := s.db.QueryRow(c.Request().Context(), `SELECT status FROM operations.operations WHERE id=$1 AND tenant_id=$2`, c.Param("id"), tenant).Scan(&status); errors.Is(scanErr, pgx.ErrNoRows) {
+			return echo.NewHTTPError(404, "operation not found")
+		} else if scanErr != nil {
+			return scanErr
+		}
+		if domain.IsTerminal(domain.OperationStatus(status)) || !domain.CanTransition(domain.OperationStatus(status), domain.Cancelled) {
+			return echo.NewHTTPError(409, "operation is already terminal or not cancellable")
+		}
+		return echo.NewHTTPError(409, "operation could not be cancelled")
 	}
 	return c.NoContent(204)
 }
@@ -336,15 +350,58 @@ func (s *service) claim(c echo.Context) error {
 	if in.LeaseSeconds <= 0 {
 		in.LeaseSeconds = 30
 	}
-	var tenant, status string
-	err := s.db.QueryRow(c.Request().Context(), `UPDATE operations.operations o SET status='RUNNING',attempt=attempt+1,lease_owner=$2,lease_expires_at=now()+make_interval(secs=>$3),updated_at=now(),version=version+1 WHERE id=$1 AND status IN ('QUEUED','RETRYING') AND (SELECT count(*) FROM operations.operations r WHERE r.tenant_id=o.tenant_id AND r.status='RUNNING') < (SELECT concurrency_limit FROM access.tenants t WHERE t.id=o.tenant_id) RETURNING tenant_id,status`, c.Param("id"), in.WorkerID, in.LeaseSeconds).Scan(&tenant, &status)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return echo.NewHTTPError(409, "operation is not claimable")
-	}
+	tenant, claimed, err := s.claimOperation(c.Request().Context(), c.Param("id"), "", in.WorkerID, in.LeaseSeconds)
 	if err != nil {
 		return err
 	}
-	return c.JSON(200, map[string]string{"tenant_id": tenant, "status": status})
+	if !claimed {
+		return echo.NewHTTPError(409, "operation is not claimable")
+	}
+	return c.JSON(200, map[string]string{"tenant_id": tenant, "status": "RUNNING"})
+}
+
+func (s *service) claimOperation(ctx context.Context, operationID, expectedTenant, workerID string, leaseSeconds int) (string, bool, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	defer tx.Rollback(ctx)
+
+	var tenant string
+	query := `SELECT tenant_id FROM operations.operations WHERE id=$1 AND status IN ('QUEUED','RETRYING') FOR UPDATE`
+	args := []any{operationID}
+	if expectedTenant != "" {
+		query = `SELECT tenant_id FROM operations.operations WHERE id=$1 AND tenant_id=$2 AND status IN ('QUEUED','RETRYING') FOR UPDATE`
+		args = append(args, expectedTenant)
+	}
+	if err = tx.QueryRow(ctx, query, args...).Scan(&tenant); errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	} else if err != nil {
+		return "", false, err
+	}
+
+	var limit, running int
+	if err = tx.QueryRow(ctx, `SELECT concurrency_limit FROM access.tenants WHERE id=$1 FOR UPDATE`, tenant).Scan(&limit); err != nil {
+		return "", false, err
+	}
+	if err = tx.QueryRow(ctx, `SELECT count(*) FROM operations.operations WHERE tenant_id=$1 AND status='RUNNING'`, tenant).Scan(&running); err != nil {
+		return "", false, err
+	}
+	if running >= limit {
+		return tenant, false, nil
+	}
+
+	result, err := tx.Exec(ctx, `UPDATE operations.operations SET status='RUNNING',attempt=attempt+1,lease_owner=$2,lease_expires_at=now()+make_interval(secs=>$3),updated_at=now(),version=version+1 WHERE id=$1 AND tenant_id=$4 AND status IN ('QUEUED','RETRYING')`, operationID, workerID, leaseSeconds, tenant)
+	if err != nil {
+		return "", false, err
+	}
+	if result.RowsAffected() != 1 {
+		return tenant, false, nil
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return "", false, err
+	}
+	return tenant, true, nil
 }
 func (s *service) heartbeat(c echo.Context) error {
 	var in struct {
@@ -403,12 +460,15 @@ func (s *service) fail(c echo.Context) error {
 	if in.Retryable && attempt < envelope.MaxAttempts {
 		status = "RETRYING"
 	}
-	_, err = s.db.Exec(c.Request().Context(), `UPDATE operations.operations SET status=$3,error_code=$4,error_message=$5,ai_explanation=$6,lease_owner=NULL,lease_expires_at=NULL,updated_at=now(),version=version+1 WHERE id=$1 AND lease_owner=$2`, c.Param("id"), in.WorkerID, status, in.ErrorCode, in.ErrorMessage, in.AIExplanation)
+	result, err := s.db.Exec(c.Request().Context(), `UPDATE operations.operations SET status=$3,error_code=$4,error_message=$5,ai_explanation=$6,lease_owner=NULL,lease_expires_at=NULL,updated_at=now(),version=version+1 WHERE id=$1 AND lease_owner=$2 AND status='RUNNING'`, c.Param("id"), in.WorkerID, status, in.ErrorCode, in.ErrorMessage, in.AIExplanation)
 	if err != nil {
 		return err
 	}
+	if result.RowsAffected() == 0 {
+		return echo.NewHTTPError(409, "operation cannot be failed")
+	}
 	if status == "RETRYING" {
-		delay := time.Duration(1<<min(attempt, 6)) * time.Second
+		delay := domain.RetryDelay(attempt)
 		envelope.NotBefore = timePointer(time.Now().Add(delay))
 		if _, runErr := dbos.RunWorkflow(s.dbos, queueOperationWorkflow, envelope, dbos.WithWorkflowID(fmt.Sprintf("retry:%s:%d", envelope.OperationID, attempt))); runErr != nil {
 			return runErr
@@ -442,23 +502,33 @@ func (s *service) workerPoll(c echo.Context) error {
 	}
 	for _, stream := range streams {
 		for _, message := range stream.Messages {
-			_ = s.redis.Set(c.Request().Context(), cursorKey, message.ID, 0).Err()
 			raw, ok := message.Values["envelope"].(string)
 			if !ok {
+				_ = s.redis.Set(c.Request().Context(), cursorKey, message.ID, 0).Err()
 				continue
 			}
 			var env contracts.QueueEnvelope
 			if json.Unmarshal([]byte(raw), &env) != nil || env.TenantID != tenant || env.ExecutionMode != "PRIVATE" {
+				_ = s.redis.Set(c.Request().Context(), cursorKey, message.ID, 0).Err()
 				continue
 			}
-			result, err := s.db.Exec(c.Request().Context(), `UPDATE operations.operations o SET status='RUNNING',attempt=attempt+1,lease_owner=$3,lease_expires_at=now()+interval '45 seconds',updated_at=now(),version=version+1 WHERE id=$1 AND tenant_id=$2 AND status IN ('QUEUED','RETRYING') AND (SELECT count(*) FROM operations.operations r WHERE r.tenant_id=o.tenant_id AND r.status='RUNNING') < (SELECT concurrency_limit FROM access.tenants t WHERE t.id=o.tenant_id)`, env.OperationID, tenant, in.WorkerID)
+			_, claimed, err := s.claimOperation(c.Request().Context(), env.OperationID, tenant, in.WorkerID, 45)
 			if err != nil {
 				return err
 			}
-			if result.RowsAffected() == 1 {
+			if claimed {
+				_ = s.redis.Set(c.Request().Context(), cursorKey, message.ID, 0).Err()
 				env.Attempt++
 				return c.JSON(200, env)
 			}
+			var status string
+			if err := s.db.QueryRow(c.Request().Context(), `SELECT status FROM operations.operations WHERE id=$1 AND tenant_id=$2`, env.OperationID, tenant).Scan(&status); errors.Is(err, pgx.ErrNoRows) || !domain.CanTransition(domain.OperationStatus(status), domain.Running) {
+				_ = s.redis.Set(c.Request().Context(), cursorKey, message.ID, 0).Err()
+				continue
+			} else if err != nil {
+				return err
+			}
+			return c.NoContent(204)
 		}
 	}
 	return c.NoContent(204)
@@ -538,7 +608,7 @@ func (s *service) workerFail(c echo.Context) error {
 		return err
 	}
 	defer tx.Rollback(c.Request().Context())
-	result, err := tx.Exec(c.Request().Context(), `UPDATE operations.operations SET status=$4,error_code=$5,error_message=$6,ai_explanation=$7,lease_owner=NULL,lease_expires_at=NULL,updated_at=now(),version=version+1 WHERE id=$1 AND tenant_id=$2 AND lease_owner=$3`, env.OperationID, tenant, in.WorkerID, status, in.ErrorCode, in.ErrorMessage, in.AIExplanation)
+	result, err := tx.Exec(c.Request().Context(), `UPDATE operations.operations SET status=$4,error_code=$5,error_message=$6,ai_explanation=$7,lease_owner=NULL,lease_expires_at=NULL,updated_at=now(),version=version+1 WHERE id=$1 AND tenant_id=$2 AND lease_owner=$3 AND status='RUNNING'`, env.OperationID, tenant, in.WorkerID, status, in.ErrorCode, in.ErrorMessage, in.AIExplanation)
 	if err != nil {
 		return err
 	}
@@ -557,7 +627,7 @@ func (s *service) workerFail(c echo.Context) error {
 		return err
 	}
 	if status == "RETRYING" {
-		delay := time.Duration(1<<min(env.Attempt, 6)) * time.Second
+		delay := domain.RetryDelay(env.Attempt)
 		env.NotBefore = timePointer(time.Now().Add(delay))
 		if _, runErr := dbos.RunWorkflow(s.dbos, queueOperationWorkflow, env, dbos.WithWorkflowID(fmt.Sprintf("retry:%s:%d", env.OperationID, env.Attempt))); runErr != nil {
 			return runErr

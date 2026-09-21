@@ -51,8 +51,8 @@ docker compose config --quiet
 
 The implementation has exactly three domain services: Customer & Access, Operations & Processing, and Usage & Webhooks. Redis contains one logical operation stream. DBOS checkpoints the transition that publishes an operation to that stream; DBOS Queues are deliberately not registered, avoiding a second logical queue.
 
-The assessment requested a Node.js/TypeScript gateway. This project intentionally uses Go/Echo for the gateway following the project owner's explicit decision. That deviation is recorded in [ADR 0001](docs/decisions/0001-go-gateway.md).
+The assessment requested a Node.js/TypeScript gateway. This project intentionally uses Go/Echo for the gateway following the project owner's explicit decision.
 
-See [architecture](docs/architecture.md), [API reference](docs/api.md), and [submission checklist](docs/submission-checklist.md).
+See [architecture](docs/architecture.md) and [API reference](docs/api.md).
 
 For an implementation-level walkthrough of every service, source directory, runtime flow, data model, configuration value, worker protocol, frontend behavior, verification command, and current hardening caveat, see the [complete codebase reference](docs/codebase.md).

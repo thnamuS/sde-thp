@@ -5,7 +5,6 @@ x-go-service: &go-service
   build:
     context: .
     dockerfile: build/go.Dockerfile
-  env_file: .env
   restart: unless-stopped
   depends_on:
     postgres:
@@ -86,7 +85,6 @@ services:
   enterprise-worker:
     <<: *go-service
     command: ["/services/enterprise-worker"]
-    env_file: .env
     environment:
       NEXORA_API_URL: http://gateway:8080
       ENTERPRISE_WORKER_API_KEY: ${ACME_API_KEY}
@@ -99,7 +97,6 @@ services:
   lorem-enterprise-worker:
     <<: *go-service
     command: ["/services/enterprise-worker"]
-    env_file: .env
     environment:
       NEXORA_API_URL: http://gateway:8080
       ENTERPRISE_WORKER_API_KEY: ${LOREM_API_KEY}
@@ -115,6 +112,7 @@ services:
     environment:
       PORT: "8090"
       NEXORA_API_URL: http://gateway:8080
+      OPERATION_TARGET_URL: http://acme:8090/work
     ports: ["127.0.0.1:8090:8090"]
 
   lorem:
@@ -124,6 +122,7 @@ services:
       PORT: "8091"
       NEXORA_API_URL: http://gateway:8080
       ACME_API_KEY: ${LOREM_API_KEY}
+      OPERATION_TARGET_URL: http://lorem:8091/work
     ports: ["127.0.0.1:8091:8091"]
 
   customer-web:

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sumanth/cipherion-ai/internal/contracts"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/sumanth/cipherion-ai/internal/contracts"
 )
 
 const (
@@ -27,7 +27,7 @@ func NewServer(name string) *echo.Echo {
 	e.HidePort = true
 	e.Use(middleware.Secure())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:3001"},
+		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"},
 		AllowHeaders:     []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-API-Key", "Idempotency-Key", "X-Request-ID"},
 		AllowCredentials: true,
 	}))

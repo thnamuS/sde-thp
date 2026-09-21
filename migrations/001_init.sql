@@ -90,12 +90,11 @@ CREATE TABLE usage.webhook_outbox (
   event_type text NOT NULL,
   operation_id uuid NOT NULL,
   payload jsonb NOT NULL,
-  status text NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','DELIVERED','DEAD_LETTERED')),
+  status text NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','IN_FLIGHT','DELIVERED','DEAD_LETTERED')),
   attempt integer NOT NULL DEFAULT 0,
   next_attempt_at timestamptz NOT NULL DEFAULT now(),
   last_error text,
   created_at timestamptz NOT NULL DEFAULT now(),
-  delivered_at timestamptz,
-  UNIQUE(endpoint_id, event_type, operation_id)
+  delivered_at timestamptz
 );
 CREATE INDEX webhook_due_idx ON usage.webhook_outbox(status, next_attempt_at);
