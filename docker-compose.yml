@@ -1,5 +1,15 @@
 name: nexora
 
+x-common-env: &common-env
+  DATABASE_URL: postgres://nexora:nexora_dev@postgres:5432/nexora?sslmode=disable
+  DBOS_SYSTEM_DATABASE_URL: postgres://nexora:nexora_dev@postgres:5432/nexora?sslmode=disable
+  REDIS_URL: redis://redis:6379/0
+  INTERNAL_SECRET: ${INTERNAL_SECRET:-development-internal-secret}
+  JWT_SECRET: ${JWT_SECRET:-development-only-secret-change-me}
+  ACME_API_KEY: ${ACME_API_KEY:-acme_demo_key_change_me_123456}
+  LOREM_API_KEY: ${LOREM_API_KEY:-lorem_demo_key_change_me_123456}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+
 x-go-service: &go-service
   image: nexora-backend:local
   build:
@@ -44,24 +54,30 @@ services:
   access:
     <<: *go-service
     command: ["/services/access"]
-    environment: {PORT: "8081"}
+    environment:
+      <<: *common-env
+      PORT: "8081"
 
   operations:
     <<: *go-service
     command: ["/services/operations"]
     environment:
+      <<: *common-env
       PORT: "8082"
       USAGE_URL: http://usage:8083
 
   usage:
     <<: *go-service
     command: ["/services/usage"]
-    environment: {PORT: "8083"}
+    environment:
+      <<: *common-env
+      PORT: "8083"
 
   gateway:
     <<: *go-service
     command: ["/services/gateway"]
     environment:
+      <<: *common-env
       PORT: "8080"
       ACCESS_URL: http://access:8081
       OPERATIONS_URL: http://operations:8082
@@ -76,6 +92,7 @@ services:
     <<: *go-service
     command: ["/services/worker"]
     environment:
+      <<: *common-env
       OPERATIONS_URL: http://operations:8082
       USAGE_URL: http://usage:8083
     deploy:
@@ -86,8 +103,9 @@ services:
     <<: *go-service
     command: ["/services/enterprise-worker"]
     environment:
+      <<: *common-env
       NEXORA_API_URL: http://gateway:8080
-      ENTERPRISE_WORKER_API_KEY: ${ACME_API_KEY}
+      ENTERPRISE_WORKER_API_KEY: ${ACME_API_KEY:-acme_demo_key_change_me_123456}
       ENTERPRISE_TARGET_URL: http://acme:8090/work
     depends_on:
       gateway: {condition: service_started}
@@ -98,8 +116,9 @@ services:
     <<: *go-service
     command: ["/services/enterprise-worker"]
     environment:
+      <<: *common-env
       NEXORA_API_URL: http://gateway:8080
-      ENTERPRISE_WORKER_API_KEY: ${LOREM_API_KEY}
+      ENTERPRISE_WORKER_API_KEY: ${LOREM_API_KEY:-lorem_demo_key_change_me_123456}
       ENTERPRISE_TARGET_URL: http://lorem:8091/work
     depends_on:
       gateway: {condition: service_started}
@@ -110,6 +129,7 @@ services:
     <<: *go-service
     command: ["/services/acme"]
     environment:
+      <<: *common-env
       PORT: "8090"
       NEXORA_API_URL: http://gateway:8080
       OPERATION_TARGET_URL: http://acme:8090/work
@@ -119,9 +139,10 @@ services:
     <<: *go-service
     command: ["/services/acme"]
     environment:
+      <<: *common-env
       PORT: "8091"
       NEXORA_API_URL: http://gateway:8080
-      ACME_API_KEY: ${LOREM_API_KEY}
+      ACME_API_KEY: ${LOREM_API_KEY:-lorem_demo_key_change_me_123456}
       OPERATION_TARGET_URL: http://lorem:8091/work
     ports: ["127.0.0.1:8091:8091"]
 

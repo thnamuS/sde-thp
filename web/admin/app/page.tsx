@@ -2,7 +2,20 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8080";
+const CONFIGURED_API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8080";
+const API = (() => {
+  if (typeof window === "undefined") return CONFIGURED_API;
+  try {
+    const configured = new URL(CONFIGURED_API);
+    if (configured.hostname === "127.0.0.1" || configured.hostname === "localhost") {
+      configured.hostname = window.location.hostname;
+      return configured.toString().replace(/\/$/, "");
+    }
+  } catch {
+    // Fall back to the configured value below.
+  }
+  return CONFIGURED_API;
+})();
 const TOKEN_KEY = "nexora_admin_token";
 
 type Tenant = {
