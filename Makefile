@@ -8,8 +8,7 @@ down:
 
 test:
 	go test ./...
-	cd web/customer && npm test
-	cd web/admin && npm test
+	node --test tests/*.test.mjs
 
 test-unit:
 	go test ./internal/... ./cmd/...
