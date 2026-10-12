@@ -85,7 +85,13 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed";
 }
 
-async function request<T>(
+class SessionExpiredError extends Error {
+  constructor() {
+    super("Your session is invalid or expired. Please sign in again.");
+  }
+}
+
+async function sendRequest<T>(
   path: string,
   token: string,
   init: RequestInit = {},
@@ -98,6 +104,7 @@ async function request<T>(
       ...init.headers,
     },
   });
+  if (response.status === 401 && token) throw new SessionExpiredError();
   const body =
     response.status === 204 ? null : await response.json().catch(() => ({}));
   if (!response.ok)
@@ -145,6 +152,27 @@ export default function Home() {
     [usage],
   );
 
+  const request = useCallback(async <T,>(
+    path: string,
+    token: string,
+    init: RequestInit = {},
+  ): Promise<T> => {
+    try {
+      return await sendRequest<T>(path, token, init);
+    } catch (e) {
+      if (e instanceof SessionExpiredError) {
+        window.localStorage.removeItem(TOKEN_KEY);
+        setToken("");
+        setTenant(null);
+        setOperations([]);
+        setWebhooks([]);
+        setUsage({ used: 0, quota: 0, remaining: 0 });
+        setAnswer("");
+      }
+      throw e;
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
     if (!token) return;
     try {
@@ -161,7 +189,7 @@ export default function Home() {
     } catch (e) {
       setError(errorMessage(e));
     }
-  }, [token]);
+  }, [token, request]);
 
   useEffect(() => {
     const initial = setTimeout(() => void refresh(), 0);

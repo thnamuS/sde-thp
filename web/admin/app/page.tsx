@@ -87,7 +87,13 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed";
 }
 
-async function api<T>(
+class SessionExpiredError extends Error {
+  constructor() {
+    super("Your session is invalid or expired. Please sign in again.");
+  }
+}
+
+async function sendRequest<T>(
   path: string,
   token: string,
   init: RequestInit = {},
@@ -100,6 +106,7 @@ async function api<T>(
       ...init.headers,
     },
   });
+  if (r.status === 401 && token) throw new SessionExpiredError();
   const body = r.status === 204 ? null : await r.json().catch(() => ({}));
   if (!r.ok)
     throw new Error(
@@ -130,6 +137,27 @@ export default function Admin() {
   const [tenantFilter, setTenantFilter] = useState("all");
   const [createdFilter, setCreatedFilter] = useState<CreatedPeriod>("all");
 
+  const api = useCallback(async <T,>(
+    path: string,
+    token: string,
+    init: RequestInit = {},
+  ): Promise<T> => {
+    try {
+      return await sendRequest<T>(path, token, init);
+    } catch (e) {
+      if (e instanceof SessionExpiredError) {
+        window.localStorage.removeItem(TOKEN_KEY);
+        setToken("");
+        setTenants([]);
+        setOps([]);
+        setUsage([]);
+        setShowNew(false);
+        setLastUpdated(null);
+      }
+      throw e;
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
     if (!token) return;
     try {
@@ -145,7 +173,7 @@ export default function Admin() {
     } catch (e) {
       setError(errorMessage(e));
     }
-  }, [token]);
+  }, [token, api]);
 
   useEffect(() => {
     const initial = setTimeout(() => void refresh(), 0);
